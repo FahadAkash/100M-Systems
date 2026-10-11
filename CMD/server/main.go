@@ -16,7 +16,9 @@ import (
 	"github.com/FahadAkash/100M-Systems/internal/middleware"
 	"github.com/FahadAkash/100M-Systems/internal/shortener"
 	"github.com/FahadAkash/100M-Systems/internal/storage"
+	"github.com/FahadAkash/100M-Systems/pkg/events"
 	"github.com/FahadAkash/100M-Systems/pkg/logger"
+	"github.com/FahadAkash/100M-Systems/pkg/metrics"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 )
@@ -25,23 +27,66 @@ func main() {
 	cfg := config.Load()
 	log := logger.New()
 
-	store, cleanup, err := createStore(cfg, log)
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	store, rdb, cleanup, err := createStore(cfg, log)
 	if err != nil {
 		log.Error("failed to initialize storage", "error", err)
 		os.Exit(1)
 	}
 	defer cleanup()
 
+	var analyticsStore storage.AnalyticsStore
+	if as, ok := store.(storage.AnalyticsStore); ok {
+		analyticsStore = as
+	}
+
+	var producer events.ClickProducer = &events.NoopProducer{}
+	if cfg.KafkaEnabled {
+		kp := events.NewKafkaProducer(cfg.KafkaBrokers, cfg.KafkaTopic, 5000)
+		producer = kp
+		defer func() {
+			if err := kp.Close(); err != nil {
+				log.Error("error closing kafka producer", "error", err)
+			}
+		}()
+		log.Info("kafka click event producer initialized", "brokers", cfg.KafkaBrokers, "topic", cfg.KafkaTopic)
+
+		if analyticsStore != nil {
+			consumer := events.NewKafkaConsumer(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.KafkaGroupID, analyticsStore.SaveClickBatch)
+			consumer.Start(ctx)
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					log.Error("error closing kafka consumer", "error", err)
+				}
+			}()
+			log.Info("kafka click event consumer worker started", "topic", cfg.KafkaTopic, "group_id", cfg.KafkaGroupID)
+		}
+	}
+
 	service := shortener.NewService(store)
-	handler := api.NewHandler(service, cfg.BaseURL, log)
+	handler := api.NewHandler(service, producer, analyticsStore, cfg.BaseURL, log)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/shorten", handler.Shorten)
+	mux.HandleFunc("GET /api/urls/{code}/analytics", handler.GetAnalytics)
 	mux.HandleFunc("GET /api/urls/{code}", handler.GetURL)
 	mux.HandleFunc("GET /{code}", handler.Redirect)
+	mux.Handle("GET /metrics", metrics.Handler())
 
 	var root http.Handler = mux
+	if cfg.RateLimitEnabled {
+		limiter := middleware.NewRateLimiter(rdb, cfg.RateLimitMaxRequests, cfg.RateLimitWindowSeconds)
+		root = limiter.Limit(root)
+		log.Info("rate limiting enabled", "max_requests", cfg.RateLimitMaxRequests, "window_seconds", cfg.RateLimitWindowSeconds)
+	}
 	root = middleware.CORS(root)
+	root = metrics.Middleware(root)
 	root = middleware.Logging(log)(root)
 	root = middleware.Recover(log)(root)
 
@@ -53,13 +98,6 @@ func main() {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer stop()
 
 	go func() {
 		log.Info("server starting", "port", cfg.Port, "mode", cfg.StorageMode)
@@ -89,26 +127,26 @@ func main() {
 func createStore(
 	cfg config.Config,
 	log *slog.Logger,
-) (storage.Store, func(), error) {
+) (storage.Store, *redis.Client, func(), error) {
 	noopCleanup := func() {}
 
 	switch cfg.StorageMode {
 	case "memory":
 		log.Info("using in-memory storage")
-		return storage.NewMemoryStore(), noopCleanup, nil
+		return storage.NewMemoryStore(), nil, noopCleanup, nil
 
 	case "redis":
 		rdb, err := initRedis(cfg)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		log.Info("using Redis storage")
-		return storage.NewRedisStore(rdb, 0), func() { _ = rdb.Close() }, nil
+		return storage.NewRedisStore(rdb, 0), rdb, func() { _ = rdb.Close() }, nil
 
 	case "postgres":
 		db, err := initPostgres(cfg)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		// Optionally enable Redis cache if configured
@@ -116,7 +154,7 @@ func createStore(
 			if rdb, err := initRedis(cfg); err == nil {
 				log.Info("using PostgreSQL storage with Redis caching")
 				cachedStore := storage.NewCachedStore(storage.NewPostgresStore(db), rdb, 24*time.Hour)
-				return cachedStore, func() {
+				return cachedStore, rdb, func() {
 					_ = db.Close()
 					_ = rdb.Close()
 				}, nil
@@ -126,28 +164,28 @@ func createStore(
 		}
 
 		log.Info("using PostgreSQL storage")
-		return storage.NewPostgresStore(db), func() { _ = db.Close() }, nil
+		return storage.NewPostgresStore(db), nil, func() { _ = db.Close() }, nil
 
 	case "cached":
 		db, err := initPostgres(cfg)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		rdb, err := initRedis(cfg)
 		if err != nil {
 			_ = db.Close()
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		log.Info("using PostgreSQL storage with Redis cache layer")
 		cachedStore := storage.NewCachedStore(storage.NewPostgresStore(db), rdb, 24*time.Hour)
-		return cachedStore, func() {
+		return cachedStore, rdb, func() {
 			_ = db.Close()
 			_ = rdb.Close()
 		}, nil
 
 	default:
-		return nil, nil, errors.New("unsupported STORAGE_MODE: " + cfg.StorageMode)
+		return nil, nil, nil, errors.New("unsupported STORAGE_MODE: " + cfg.StorageMode)
 	}
 }
 
@@ -182,6 +220,18 @@ func initPostgres(cfg config.Config) (*sql.DB, error) {
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 	CREATE INDEX IF NOT EXISTS idx_urls_code ON urls (code);
+
+	CREATE TABLE IF NOT EXISTS url_clicks (
+		id BIGSERIAL PRIMARY KEY,
+		code VARCHAR(16) NOT NULL,
+		original_url TEXT NOT NULL,
+		ip VARCHAR(64) NOT NULL DEFAULT '',
+		user_agent TEXT NOT NULL DEFAULT '',
+		referer TEXT NOT NULL DEFAULT '',
+		clicked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_url_clicks_code ON url_clicks (code);
+	CREATE INDEX IF NOT EXISTS idx_url_clicks_clicked_at ON url_clicks (clicked_at);
 	`
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		_ = db.Close()

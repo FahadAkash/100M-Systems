@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/FahadAkash/100M-Systems/pkg/events"
+	"github.com/FahadAkash/100M-Systems/pkg/metrics"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -49,6 +51,7 @@ func (c *CachedStore) GetByCode(ctx context.Context, code string) (URL, error) {
 		if err == nil {
 			var url URL
 			if err := json.Unmarshal(data, &url); err == nil {
+				metrics.CacheHitsTotal.Inc()
 				return url, nil
 			}
 		} else if !errors.Is(err, redis.Nil) {
@@ -57,6 +60,7 @@ func (c *CachedStore) GetByCode(ctx context.Context, code string) (URL, error) {
 	}
 
 	// 2. Cache miss: fetch from primary persistent store
+	metrics.CacheMissesTotal.Inc()
 	url, err := c.primary.GetByCode(ctx, code)
 	if err != nil {
 		return URL{}, err
@@ -71,5 +75,21 @@ func (c *CachedStore) GetByCode(ctx context.Context, code string) (URL, error) {
 	}
 
 	return url, nil
+}
+
+// SaveClickBatch delegates batch persistence to the primary store if it implements AnalyticsStore.
+func (c *CachedStore) SaveClickBatch(ctx context.Context, batch []events.ClickEvent) error {
+	if a, ok := c.primary.(AnalyticsStore); ok {
+		return a.SaveClickBatch(ctx, batch)
+	}
+	return nil
+}
+
+// GetAnalytics queries analytics through the underlying primary store.
+func (c *CachedStore) GetAnalytics(ctx context.Context, code string) (events.ClickAnalyticsSummary, error) {
+	if a, ok := c.primary.(AnalyticsStore); ok {
+		return a.GetAnalytics(ctx, code)
+	}
+	return events.ClickAnalyticsSummary{}, ErrNotFound
 }
 

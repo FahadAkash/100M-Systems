@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/FahadAkash/100M-Systems/pkg/events"
 )
 
 var (
@@ -23,4 +25,11 @@ type Store interface {
 	GetByCode(ctx context.Context, code string) (URL, error)
 }
 
+// AnalyticsStore defines methods for storing and retrieving click analytics.
+type AnalyticsStore interface {
+	SaveClickBatch(ctx context.Context, batch []events.ClickEvent) error
+	GetAnalytics(ctx context.Context, code string) (events.ClickAnalyticsSummary, error)
+}
+
 type Storage = Store
+

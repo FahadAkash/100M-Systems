@@ -7,26 +7,38 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/FahadAkash/100M-Systems/internal/shortener"
 	"github.com/FahadAkash/100M-Systems/internal/storage"
+	"github.com/FahadAkash/100M-Systems/pkg/events"
+	"github.com/FahadAkash/100M-Systems/pkg/metrics"
 )
 
 type Handler struct {
-	service *shortener.Service
-	baseURL string
-	log     *slog.Logger
+	service   *shortener.Service
+	producer  events.ClickProducer
+	analytics storage.AnalyticsStore
+	baseURL   string
+	log       *slog.Logger
 }
 
 func NewHandler(
 	service *shortener.Service,
+	producer events.ClickProducer,
+	analytics storage.AnalyticsStore,
 	baseURL string,
 	log *slog.Logger,
 ) *Handler {
+	if producer == nil {
+		producer = &events.NoopProducer{}
+	}
 	return &Handler{
-		service: service,
-		baseURL: strings.TrimRight(baseURL, "/"),
-		log:     log,
+		service:   service,
+		producer:  producer,
+		analytics: analytics,
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		log:       log,
 	}
 }
 
@@ -83,6 +95,8 @@ func (h *Handler) Shorten(
 		return
 	}
 
+	metrics.URLShortenedTotal.Inc()
+
 	writeJSON(w, http.StatusCreated, shortenResponse{
 		Code:        record.Code,
 		ShortURL:    h.baseURL + "/" + record.Code,
@@ -104,6 +118,7 @@ func (h *Handler) Redirect(
 	record, err := h.service.Resolve(r.Context(), code)
 
 	if err != nil {
+		metrics.URLRedirectsTotal.WithLabelValues("not_found").Inc()
 		if errors.Is(err, storage.ErrNotFound) ||
 			errors.Is(err, shortener.ErrInvalidCode) {
 			writeError(w, http.StatusNotFound, "short URL not found")
@@ -113,6 +128,27 @@ func (h *Handler) Redirect(
 		h.log.Error("failed to resolve URL", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not resolve URL")
 		return
+	}
+
+	metrics.URLRedirectsTotal.WithLabelValues("found").Inc()
+
+	// Emit asynchronous click event to Kafka streaming pipeline (non-blocking)
+	if h.producer != nil {
+		clientIP := r.Header.Get("X-Forwarded-For")
+		if clientIP == "" {
+			clientIP = r.RemoteAddr
+		} else if idx := strings.Index(clientIP, ","); idx != -1 {
+			clientIP = strings.TrimSpace(clientIP[:idx])
+		}
+
+		h.producer.Publish(events.ClickEvent{
+			Code:        record.Code,
+			OriginalURL: record.Original,
+			IP:          clientIP,
+			UserAgent:   r.UserAgent(),
+			Referer:     r.Referer(),
+			Timestamp:   time.Now().UTC(),
+		})
 	}
 
 	http.Redirect(w, r, record.Original, http.StatusFound)
@@ -144,6 +180,37 @@ func (h *Handler) GetURL(
 	}
 
 	writeJSON(w, http.StatusOK, record)
+}
+
+func (h *Handler) GetAnalytics(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if h.analytics == nil {
+		writeError(w, http.StatusNotImplemented, "analytics engine is not configured")
+		return
+	}
+
+	code := r.PathValue("code")
+	summary, err := h.analytics.GetAnalytics(r.Context(), code)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, shortener.ErrInvalidCode) {
+			writeError(w, http.StatusNotFound, "short URL not found")
+			return
+		}
+
+		h.log.Error("failed to get analytics", "code", code, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not retrieve analytics")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

@@ -11,24 +11,39 @@ import (
 
 	"github.com/FahadAkash/100M-Systems/internal/shortener"
 	"github.com/FahadAkash/100M-Systems/internal/storage"
+	"github.com/FahadAkash/100M-Systems/pkg/events"
 )
 
-func setupTestHandler() (*Handler, *http.ServeMux) {
+type mockProducer struct {
+	events []events.ClickEvent
+}
+
+func (m *mockProducer) Publish(e events.ClickEvent) {
+	m.events = append(m.events, e)
+}
+
+func (m *mockProducer) Close() error {
+	return nil
+}
+
+func setupTestHandler() (*Handler, *mockProducer, *storage.MemoryStore, *http.ServeMux) {
 	store := storage.NewMemoryStore()
 	svc := shortener.NewService(store)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(svc, "http://localhost:8080", logger)
+	producer := &mockProducer{}
+	handler := NewHandler(svc, producer, store, "http://localhost:8080", logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/shorten", handler.Shorten)
+	mux.HandleFunc("GET /api/urls/{code}/analytics", handler.GetAnalytics)
 	mux.HandleFunc("GET /api/urls/{code}", handler.GetURL)
 	mux.HandleFunc("GET /{code}", handler.Redirect)
 
-	return handler, mux
+	return handler, producer, store, mux
 }
 
 func TestHandler_Shorten(t *testing.T) {
-	_, mux := setupTestHandler()
+	_, _, _, mux := setupTestHandler()
 
 	// 1. Success case
 	body := bytes.NewBufferString(`{"url":"https://golang.org"}`)
@@ -64,7 +79,7 @@ func TestHandler_Shorten(t *testing.T) {
 }
 
 func TestHandler_RedirectAndGet(t *testing.T) {
-	_, mux := setupTestHandler()
+	_, producer, store, mux := setupTestHandler()
 
 	// Shorten first
 	body := bytes.NewBufferString(`{"url":"https://google.com"}`)
@@ -77,6 +92,7 @@ func TestHandler_RedirectAndGet(t *testing.T) {
 
 	// Test Redirect
 	redirectReq := httptest.NewRequest(http.MethodGet, "/"+resp.Code, nil)
+	redirectReq.Header.Set("User-Agent", "TestBrowser/1.0")
 	redirectW := httptest.NewRecorder()
 	mux.ServeHTTP(redirectW, redirectReq)
 
@@ -85,6 +101,37 @@ func TestHandler_RedirectAndGet(t *testing.T) {
 	}
 	if loc := redirectW.Header().Get("Location"); loc != "https://google.com" {
 		t.Errorf("expected Location https://google.com, got %s", loc)
+	}
+
+	// Verify click event was emitted to producer
+	if len(producer.events) != 1 {
+		t.Fatalf("expected 1 click event produced, got %d", len(producer.events))
+	}
+	if producer.events[0].Code != resp.Code {
+		t.Errorf("expected code %s in click event, got %s", resp.Code, producer.events[0].Code)
+	}
+
+	// Persist the click to store (simulating consumer)
+	_ = store.SaveClickBatch(redirectReq.Context(), producer.events)
+
+	// Test GetAnalytics
+	analyticsReq := httptest.NewRequest(http.MethodGet, "/api/urls/"+resp.Code+"/analytics", nil)
+	analyticsW := httptest.NewRecorder()
+	mux.ServeHTTP(analyticsW, analyticsReq)
+
+	if analyticsW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for analytics, got %d: %s", analyticsW.Code, analyticsW.Body.String())
+	}
+
+	var analytics events.ClickAnalyticsSummary
+	if err := json.Unmarshal(analyticsW.Body.Bytes(), &analytics); err != nil {
+		t.Fatalf("failed to parse analytics response: %v", err)
+	}
+	if analytics.TotalClicks != 1 {
+		t.Errorf("expected 1 total click, got %d", analytics.TotalClicks)
+	}
+	if len(analytics.RecentClicks) != 1 {
+		t.Errorf("expected 1 recent click, got %d", len(analytics.RecentClicks))
 	}
 
 	// Test GetURL

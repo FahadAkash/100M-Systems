@@ -15,8 +15,15 @@ type Config struct {
 	DatabaseURL   string
 	RedisURL      string
 	RedisHost     string
-	RedisPort     string
-	RedisPassword string
+	RedisPort              string
+	RedisPassword          string
+	RateLimitEnabled       bool
+	RateLimitMaxRequests   int
+	RateLimitWindowSeconds int
+	KafkaEnabled           bool
+	KafkaBrokers           []string
+	KafkaTopic             string
+	KafkaGroupID           string
 }
 
 func Load() Config {
@@ -51,15 +58,47 @@ func Load() Config {
 		}
 	}
 
+	rateLimitEnabled := getEnv("RATE_LIMIT_ENABLED", "true") != "false"
+	rateLimitMax, err := strconv.Atoi(getEnv("RATE_LIMIT_MAX_REQUESTS", "60"))
+	if err != nil || rateLimitMax <= 0 {
+		rateLimitMax = 60
+	}
+	rateLimitWindow, err := strconv.Atoi(getEnv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+	if err != nil || rateLimitWindow <= 0 {
+		rateLimitWindow = 60
+	}
+
+	kafkaEnabled := getEnv("KAFKA_ENABLED", "false") == "true"
+	kafkaBrokersRaw := getEnv("KAFKA_BROKERS", "127.0.0.1:9092")
+	var kafkaBrokers []string
+	for _, b := range strings.Split(kafkaBrokersRaw, ",") {
+		b = strings.TrimSpace(b)
+		if b != "" {
+			kafkaBrokers = append(kafkaBrokers, b)
+		}
+	}
+	if len(kafkaBrokers) == 0 {
+		kafkaBrokers = []string{"127.0.0.1:9092"}
+	}
+	kafkaTopic := getEnv("KAFKA_TOPIC", "url-clicks")
+	kafkaGroupID := getEnv("KAFKA_GROUP_ID", "url-shortener-analytics")
+
 	return Config{
-		Port:          getEnv("PORT", "8080"),
-		BaseURL:       strings.TrimRight(getEnv("BASE_URL", "http://localhost:8080"), "/"),
-		StorageMode:   strings.ToLower(getEnv("STORAGE_MODE", "memory")),
-		DatabaseURL:   dbURL,
-		RedisURL:      redisURL,
-		RedisHost:     redisHost,
-		RedisPort:     redisPort,
-		RedisPassword: redisPass,
+		Port:                   getEnv("PORT", "8080"),
+		BaseURL:                strings.TrimRight(getEnv("BASE_URL", "http://localhost:8080"), "/"),
+		StorageMode:            strings.ToLower(getEnv("STORAGE_MODE", "memory")),
+		DatabaseURL:            dbURL,
+		RedisURL:               redisURL,
+		RedisHost:              redisHost,
+		RedisPort:              redisPort,
+		RedisPassword:          redisPass,
+		RateLimitEnabled:       rateLimitEnabled,
+		RateLimitMaxRequests:   rateLimitMax,
+		RateLimitWindowSeconds: rateLimitWindow,
+		KafkaEnabled:           kafkaEnabled,
+		KafkaBrokers:           kafkaBrokers,
+		KafkaTopic:             kafkaTopic,
+		KafkaGroupID:           kafkaGroupID,
 	}
 }
 
