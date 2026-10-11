@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react"
-import { Copy, Check, ExternalLink, QrCode, Download, Share2 } from "lucide-react"
+import { Copy, Check, ExternalLink, QrCode, Download, Share2, BarChart3, Clock } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -9,9 +9,10 @@ import { toast } from "sonner"
 
 interface ResultCardProps {
   result: ShortenResponse
+  onViewAnalytics?: (code: string) => void
 }
 
-export const ResultCard: React.FC<ResultCardProps> = ({ result }) => {
+export const ResultCard: React.FC<ResultCardProps> = ({ result, onViewAnalytics }) => {
   const [copied, setCopied] = useState(false)
   const [showQR, setShowQR] = useState(false)
   const qrRef = useRef<HTMLDivElement>(null)
@@ -65,10 +66,16 @@ export const ResultCard: React.FC<ResultCardProps> = ({ result }) => {
           <div className="space-y-1.5 flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="border-primary/40 text-primary bg-primary/10 font-mono text-xs">
-                Code: {result.code}
+                Code: /{result.code}
               </Badge>
+              {result.expires_at && (
+                <Badge variant="secondary" className="text-[11px] gap-1 font-normal text-muted-foreground">
+                  <Clock className="w-3 h-3 text-indigo-400" />
+                  Expires: {new Date(result.expires_at).toLocaleDateString()}
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground flex items-center gap-1">
-                <Share2 className="w-3 h-3" /> Ready to share
+                <Share2 className="w-3 h-3" /> Ready
               </span>
             </div>
 
@@ -81,7 +88,7 @@ export const ResultCard: React.FC<ResultCardProps> = ({ result }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 flex-wrap">
             <Button
               onClick={handleCopy}
               variant={copied ? "default" : "secondary"}
@@ -91,11 +98,24 @@ export const ResultCard: React.FC<ResultCardProps> = ({ result }) => {
               <span>{copied ? "Copied" : "Copy"}</span>
             </Button>
 
+            {onViewAnalytics && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onViewAnalytics(result.code)}
+                className="gap-1.5 h-10"
+                title="View Click Analytics"
+              >
+                <BarChart3 className="w-4 h-4 text-primary" />
+                <span className="hidden sm:inline">Analytics</span>
+              </Button>
+            )}
+
             <a
               href={result.short_url}
               target="_blank"
               rel="noreferrer"
-              className={buttonVariants({ variant: "outline", className: "gap-1.5" })}
+              className={buttonVariants({ variant: "outline", className: "gap-1.5 h-10" })}
             >
               <ExternalLink className="w-4 h-4" />
               <span className="hidden sm:inline">Visit</span>
@@ -106,7 +126,7 @@ export const ResultCard: React.FC<ResultCardProps> = ({ result }) => {
               size="icon"
               onClick={() => setShowQR(!showQR)}
               title="Show QR Code"
-              className={showQR ? "bg-accent text-accent-foreground" : ""}
+              className={`h-10 w-10 ${showQR ? "bg-accent text-accent-foreground" : ""}`}
             >
               <QrCode className="w-4 h-4" />
             </Button>

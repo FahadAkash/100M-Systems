@@ -99,10 +99,23 @@ func (m *MemoryStore) GetAnalytics(ctx context.Context, code string) (events.Cli
 
 	clicks := m.clicks[code]
 	summary := events.ClickAnalyticsSummary{
-		Code:         code,
-		OriginalURL:  url.Original,
-		TotalClicks:  int64(len(clicks)),
-		RecentClicks: make([]events.ClickEventSummary, 0),
+		Code:             code,
+		OriginalURL:      url.Original,
+		TotalClicks:      int64(len(clicks)),
+		Browsers:         make(map[string]int64),
+		OperatingSystems: make(map[string]int64),
+		Devices:          make(map[string]int64),
+		TopReferrers:     make(map[string]int64),
+		RecentClicks:     make([]events.ClickEventSummary, 0),
+	}
+
+	for _, c := range clicks {
+		b, os, d := events.ParseUserAgent(c.UserAgent)
+		summary.Browsers[b]++
+		summary.OperatingSystems[os]++
+		summary.Devices[d]++
+		ref := events.NormalizeReferrer(c.Referer)
+		summary.TopReferrers[ref]++
 	}
 
 	if len(clicks) > 0 {

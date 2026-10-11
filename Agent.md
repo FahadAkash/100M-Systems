@@ -145,3 +145,34 @@ docker compose down
   ```http
   GET /metrics
   ```
+
+## 100M Users Scale & Smoke Testing Suite
+
+The repository includes a dedicated high-throughput load generator and automated smoke testing suite in `cmd/simulator`:
+
+### 1. Run Comprehensive Endpoint Smoke Tests
+Validates all endpoints, status codes, error paths, CORS headers, rate limiting, and Prometheus metric emissions:
+```bash
+go run ./cmd/simulator -mode=smoke
+```
+
+### 2. Run 100M Users Traffic & Scale Simulation
+Simulates high-concurrency traffic with realistic rotating global IPs (`X-Forwarded-For`), User-Agents, Referrers, and Pareto (80/20) viral link access patterns:
+```bash
+# Run 5,000 requests across 100 concurrent virtual users
+go run ./cmd/simulator -mode=load -concurrency=100 -requests=5000
+```
+
+### 3. Run Both (Smoke + Scale Benchmark)
+```bash
+go run ./cmd/simulator -mode=all -concurrency=50 -requests=2000
+```
+
+### 4. Real-World Server Latency Simulation
+To simulate cloud datacenter network delays and realistic processing times over local LAN:
+In `.env`:
+```env
+SIMULATE_LATENCY_ENABLED=true   # Injects realistic 15ms-35ms processing time with jitter
+SIMULATE_LATENCY_MIN_MS=15
+SIMULATE_LATENCY_MAX_MS=35
+```

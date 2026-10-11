@@ -80,6 +80,11 @@ func main() {
 	mux.Handle("GET /metrics", metrics.Handler())
 
 	var root http.Handler = mux
+	if cfg.SimulateLatencyEnabled {
+		sim := middleware.NewLatencySimulator(true, cfg.SimulateLatencyMinMs, cfg.SimulateLatencyMaxMs)
+		root = sim.Middleware(root)
+		log.Info("server latency simulation enabled", "min_ms", cfg.SimulateLatencyMinMs, "max_ms", cfg.SimulateLatencyMaxMs)
+	}
 	if cfg.RateLimitEnabled {
 		limiter := middleware.NewRateLimiter(rdb, cfg.RateLimitMaxRequests, cfg.RateLimitWindowSeconds)
 		root = limiter.Limit(root)
@@ -215,15 +220,19 @@ func initPostgres(cfg config.Config) (*sql.DB, error) {
 	schema := `
 	CREATE TABLE IF NOT EXISTS urls (
 		id BIGSERIAL PRIMARY KEY,
-		code VARCHAR(16) NOT NULL UNIQUE,
+		code VARCHAR(32) NOT NULL UNIQUE,
 		original_url TEXT NOT NULL,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		expires_at TIMESTAMPTZ
 	);
+	ALTER TABLE urls ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+	ALTER TABLE urls ALTER COLUMN code TYPE VARCHAR(32);
 	CREATE INDEX IF NOT EXISTS idx_urls_code ON urls (code);
+	CREATE INDEX IF NOT EXISTS idx_urls_expires_at ON urls (expires_at);
 
 	CREATE TABLE IF NOT EXISTS url_clicks (
 		id BIGSERIAL PRIMARY KEY,
-		code VARCHAR(16) NOT NULL,
+		code VARCHAR(32) NOT NULL,
 		original_url TEXT NOT NULL,
 		ip VARCHAR(64) NOT NULL DEFAULT '',
 		user_agent TEXT NOT NULL DEFAULT '',

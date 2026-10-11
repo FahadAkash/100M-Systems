@@ -11,12 +11,14 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("conflict")
+	ErrExpired  = errors.New("url has expired")
 )
 
 type URL struct {
-	Code      string    `json:"code"`
-	Original  string    `json:"original_url"`
-	CreatedAt time.Time `json:"created_at"`
+	Code      string     `json:"code"`
+	Original  string     `json:"original_url"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 type Store interface {

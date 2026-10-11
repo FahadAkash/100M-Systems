@@ -4,9 +4,10 @@ import { ShortenForm } from "@/components/ShortenForm"
 import { ResultCard } from "@/components/ResultCard"
 import { RecentLinks, StoredLink } from "@/components/RecentLinks"
 import { UrlInspector } from "@/components/UrlInspector"
+import { AnalyticsModal } from "@/components/AnalyticsModal"
 import { Button } from "@/components/ui/button"
 import { ShortenResponse } from "@/lib/api"
-import { Zap, Search, Database, Layers, ShieldCheck, Heart } from "lucide-react"
+import { Zap, Search, Database, ShieldCheck } from "lucide-react"
 
 const STORAGE_KEY = "100m_recent_urls"
 
@@ -14,6 +15,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<"shorten" | "inspect">("shorten")
   const [currentResult, setCurrentResult] = useState<ShortenResponse | null>(null)
   const [recentLinks, setRecentLinks] = useState<StoredLink[]>([])
+  const [analyticsCode, setAnalyticsCode] = useState<string | null>(null)
 
   useEffect(() => {
     try {
@@ -95,12 +97,18 @@ export function App() {
           <div className="space-y-6">
             <ShortenForm onSuccess={handleShortenSuccess} />
 
-            {currentResult && <ResultCard result={currentResult} />}
+            {currentResult && (
+              <ResultCard
+                result={currentResult}
+                onViewAnalytics={(code) => setAnalyticsCode(code)}
+              />
+            )}
 
             <RecentLinks
               links={recentLinks}
               onClear={handleClearHistory}
               onRemove={handleRemoveLink}
+              onViewAnalytics={(code) => setAnalyticsCode(code)}
             />
           </div>
         ) : (
@@ -114,10 +122,10 @@ export function App() {
           <div className="p-4 rounded-xl border border-border/40 bg-card/40 space-y-2">
             <div className="flex items-center gap-2 text-primary font-semibold text-sm">
               <Zap className="w-4 h-4" />
-              <span>Sub-Millisecond Redirect</span>
+              <span>L1 Memory + L2 Redis</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Hot short codes are resolved directly from in-memory Redis cache before hitting Postgres.
+              Hot viral links resolve in nanoseconds with zero network hops, protected by singleflight stampede defense.
             </p>
           </div>
 
@@ -127,21 +135,27 @@ export function App() {
               <span>Persistent Storage</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Guaranteed durability backed by relational PostgreSQL with conflict-safe unique keys.
+              Guaranteed durability backed by PostgreSQL with vanity alias support and optional TTL link expiration.
             </p>
           </div>
 
           <div className="p-4 rounded-xl border border-border/40 bg-card/40 space-y-2">
             <div className="flex items-center gap-2 text-sky-400 font-semibold text-sm">
               <ShieldCheck className="w-4 h-4" />
-              <span>Safe & Collision Free</span>
+              <span>Streaming Analytics</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Cryptographically secure 8-character Base64 generation with collision auto-retry.
+              Asynchronous streaming pipeline tracks click counts, devices, operating systems, and top referrers.
             </p>
           </div>
         </section>
       </main>
+
+      {/* Analytics Modal Dialog */}
+      <AnalyticsModal
+        code={analyticsCode}
+        onClose={() => setAnalyticsCode(null)}
+      />
 
       {/* Footer */}
       <footer className="border-t border-border/40 py-6 text-center text-xs text-muted-foreground">
@@ -160,4 +174,3 @@ export function App() {
 }
 
 export default App
-

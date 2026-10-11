@@ -43,13 +43,16 @@ func NewHandler(
 }
 
 type shortenRequest struct {
-	URL string `json:"url"`
+	URL            string `json:"url"`
+	CustomCode     string `json:"custom_code,omitempty"`
+	ExpiresInHours int    `json:"expires_in_hours,omitempty"`
 }
 
 type shortenResponse struct {
-	Code        string `json:"code"`
-	ShortURL    string `json:"short_url"`
-	OriginalURL string `json:"original_url"`
+	Code        string     `json:"code"`
+	ShortURL    string     `json:"short_url"`
+	OriginalURL string     `json:"original_url"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
 type errorResponse struct {
@@ -83,10 +86,24 @@ func (h *Handler) Shorten(
 		return
 	}
 
-	record, err := h.service.Shorten(r.Context(), req.URL)
+	var expiresAt *time.Time
+	if req.ExpiresInHours > 0 {
+		exp := time.Now().UTC().Add(time.Duration(req.ExpiresInHours) * time.Hour)
+		expiresAt = &exp
+	}
+
+	record, err := h.service.ShortenWithOptions(r.Context(), req.URL, req.CustomCode, expiresAt)
 	if err != nil {
 		if errors.Is(err, shortener.ErrInvalidURL) {
 			writeError(w, http.StatusBadRequest, "invalid URL")
+			return
+		}
+		if errors.Is(err, shortener.ErrInvalidAlias) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, shortener.ErrAliasTaken) {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 
@@ -101,6 +118,7 @@ func (h *Handler) Shorten(
 		Code:        record.Code,
 		ShortURL:    h.baseURL + "/" + record.Code,
 		OriginalURL: record.Original,
+		ExpiresAt:   record.ExpiresAt,
 	})
 }
 

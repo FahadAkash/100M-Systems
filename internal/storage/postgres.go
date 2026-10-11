@@ -22,11 +22,12 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 func (p *PostgresStore) Save(ctx context.Context, url URL) error {
 	_, err := p.db.ExecContext(
 		ctx,
-		`INSERT INTO urls (code , original_url , created_at)
-		VALUES ($1 , $2 , $3)`,
+		`INSERT INTO urls (code, original_url, created_at, expires_at)
+		VALUES ($1, $2, $3, $4)`,
 		url.Code,
 		url.Original,
 		url.CreatedAt,
+		url.ExpiresAt,
 	)
 	if err != nil {
 		var pgErr *pq.Error
@@ -41,11 +42,11 @@ func (p *PostgresStore) GetByCode(ctx context.Context, code string) (URL, error)
 	var url URL
 	err := p.db.QueryRowContext(
 		ctx,
-		`SELECT code, original_url, created_at FROM urls WHERE code = $1`,
+		`SELECT code, original_url, created_at, expires_at FROM urls WHERE code = $1`,
 		code,
-	).Scan(&url.Code, &url.Original, &url.CreatedAt)
+	).Scan(&url.Code, &url.Original, &url.CreatedAt, &url.ExpiresAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return url, ErrNotFound
 		}
 		return url, err
@@ -83,10 +84,15 @@ func (p *PostgresStore) SaveClickBatch(ctx context.Context, batch []events.Click
 	return tx.Commit()
 }
 
-// GetAnalytics queries the click metrics and recent clicks for a given short code.
+// GetAnalytics queries the click metrics, dimensional breakdowns, and recent clicks for a given short code.
 func (p *PostgresStore) GetAnalytics(ctx context.Context, code string) (events.ClickAnalyticsSummary, error) {
 	var summary events.ClickAnalyticsSummary
 	summary.Code = code
+	summary.Browsers = make(map[string]int64)
+	summary.OperatingSystems = make(map[string]int64)
+	summary.Devices = make(map[string]int64)
+	summary.TopReferrers = make(map[string]int64)
+	summary.RecentClicks = make([]events.ClickEventSummary, 0)
 
 	// 1. Verify URL existence
 	err := p.db.QueryRowContext(ctx, `SELECT original_url FROM urls WHERE code = $1`, code).Scan(&summary.OriginalURL)
@@ -112,7 +118,30 @@ func (p *PostgresStore) GetAnalytics(ctx context.Context, code string) (events.C
 		summary.LastClicked = &t
 	}
 
-	// 3. Retrieve up to 20 most recent clicks
+	// 3. Compute dimensional analytics breakdown from click logs (up to 500 most recent records)
+	dimRows, err := p.db.QueryContext(ctx, `
+		SELECT user_agent, referer
+		FROM url_clicks
+		WHERE code = $1
+		ORDER BY clicked_at DESC
+		LIMIT 500
+	`, code)
+	if err == nil {
+		defer dimRows.Close()
+		for dimRows.Next() {
+			var ua, ref string
+			if scanErr := dimRows.Scan(&ua, &ref); scanErr == nil {
+				b, os, d := events.ParseUserAgent(ua)
+				summary.Browsers[b]++
+				summary.OperatingSystems[os]++
+				summary.Devices[d]++
+				normRef := events.NormalizeReferrer(ref)
+				summary.TopReferrers[normRef]++
+			}
+		}
+	}
+
+	// 4. Retrieve up to 20 most recent clicks
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT ip, user_agent, referer, clicked_at
 		FROM url_clicks
@@ -125,14 +154,12 @@ func (p *PostgresStore) GetAnalytics(ctx context.Context, code string) (events.C
 	}
 	defer rows.Close()
 
-	summary.RecentClicks = make([]events.ClickEventSummary, 0)
 	for rows.Next() {
 		var item events.ClickEventSummary
-		if err := rows.Scan(&item.IP, &item.UserAgent, &item.Referer, &item.Timestamp); err == nil {
+		if scanErr := rows.Scan(&item.IP, &item.UserAgent, &item.Referer, &item.Timestamp); scanErr == nil {
 			summary.RecentClicks = append(summary.RecentClicks, item)
 		}
 	}
 
 	return summary, nil
 }
-

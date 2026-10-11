@@ -24,6 +24,9 @@ type Config struct {
 	KafkaBrokers           []string
 	KafkaTopic             string
 	KafkaGroupID           string
+	SimulateLatencyEnabled bool
+	SimulateLatencyMinMs   int
+	SimulateLatencyMaxMs   int
 }
 
 func Load() Config {
@@ -83,6 +86,16 @@ func Load() Config {
 	kafkaTopic := getEnv("KAFKA_TOPIC", "url-clicks")
 	kafkaGroupID := getEnv("KAFKA_GROUP_ID", "url-shortener-analytics")
 
+	simulateLatencyEnabled := getEnv("SIMULATE_LATENCY_ENABLED", "false") == "true"
+	simulateLatencyMinMs, _ := strconv.Atoi(getEnv("SIMULATE_LATENCY_MIN_MS", "15"))
+	if simulateLatencyMinMs <= 0 {
+		simulateLatencyMinMs = 15
+	}
+	simulateLatencyMaxMs, _ := strconv.Atoi(getEnv("SIMULATE_LATENCY_MAX_MS", "40"))
+	if simulateLatencyMaxMs < simulateLatencyMinMs {
+		simulateLatencyMaxMs = simulateLatencyMinMs + 25
+	}
+
 	return Config{
 		Port:                   getEnv("PORT", "8080"),
 		BaseURL:                strings.TrimRight(getEnv("BASE_URL", "http://localhost:8080"), "/"),
@@ -99,6 +112,9 @@ func Load() Config {
 		KafkaBrokers:           kafkaBrokers,
 		KafkaTopic:             kafkaTopic,
 		KafkaGroupID:           kafkaGroupID,
+		SimulateLatencyEnabled: simulateLatencyEnabled,
+		SimulateLatencyMinMs:   simulateLatencyMinMs,
+		SimulateLatencyMaxMs:   simulateLatencyMaxMs,
 	}
 }
 

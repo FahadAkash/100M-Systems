@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { History, Copy, Check, ExternalLink, Trash2 } from "lucide-react"
+import { History, Copy, Check, ExternalLink, Trash2, BarChart3, Clock } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -14,9 +14,10 @@ interface RecentLinksProps {
   links: StoredLink[]
   onClear: () => void
   onRemove: (code: string) => void
+  onViewAnalytics?: (code: string) => void
 }
 
-export const RecentLinks: React.FC<RecentLinksProps> = ({ links, onClear, onRemove }) => {
+export const RecentLinks: React.FC<RecentLinksProps> = ({ links, onClear, onRemove, onViewAnalytics }) => {
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
 
   const copyUrl = (url: string, code: string) => {
@@ -66,8 +67,14 @@ export const RecentLinks: React.FC<RecentLinksProps> = ({ links, onClear, onRemo
                     {link.short_url}
                   </span>
                   <Badge variant="outline" className="text-[10px] py-0 px-1.5">
-                    {link.code}
+                    /{link.code}
                   </Badge>
+                  {link.expires_at && (
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                      <Clock className="w-2.5 h-2.5 text-indigo-400" />
+                      Exp: {new Date(link.expires_at).toLocaleDateString()}
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-muted-foreground truncate max-w-md">
                   {link.original_url}
@@ -88,6 +95,19 @@ export const RecentLinks: React.FC<RecentLinksProps> = ({ links, onClear, onRemo
                   )}
                   <span>{copiedCode === link.code ? "Copied" : "Copy"}</span>
                 </Button>
+
+                {onViewAnalytics && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-2 text-xs gap-1"
+                    onClick={() => onViewAnalytics(link.code)}
+                    title="View Click Analytics"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5 text-primary" />
+                    <span className="hidden sm:inline">Stats</span>
+                  </Button>
+                )}
 
                 <a
                   href={link.short_url}
@@ -115,4 +135,5 @@ export const RecentLinks: React.FC<RecentLinksProps> = ({ links, onClear, onRemo
     </Card>
   )
 }
+
 
