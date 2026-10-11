@@ -40,3 +40,7 @@ go.work.sum
 Thumbs.db
 Desktop.ini
 
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.env.local

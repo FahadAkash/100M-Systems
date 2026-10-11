@@ -41,6 +41,7 @@ func main() {
 	mux.HandleFunc("GET /{code}", handler.Redirect)
 
 	var root http.Handler = mux
+	root = middleware.CORS(root)
 	root = middleware.Logging(log)(root)
 	root = middleware.Recover(log)(root)
 
