@@ -24,28 +24,29 @@ Configure via `STORAGE_MODE` in `.env`:
 - `STORAGE_MODE=redis`: Redis-only storage
 - `STORAGE_MODE=memory`: In-memory map storage
 
-## Database Setup (PostgreSQL)
-
-Execute `schema.sql` against your PostgreSQL database:
-
-```bash
-psql -U postgres -d appdb -f schema.sql
-```
-
 ## Running Locally
 
-1. Copy `.env.example` to `.env` and set your credentials:
+1. Set your database credentials in `.env` (pointing to your server, e.g. `192.168.0.113`):
    ```bash
    cp .env.example .env
    ```
-2. Run database migrations / schema:
-   ```bash
-   psql -U postgres -d appdb -f schema.sql
-   ```
-3. Start the server:
+2. Start the server directly:
    ```bash
    go run ./CMD/server
    ```
+
+## Running with Docker
+
+Since PostgreSQL and Redis run on your server (`192.168.0.113`), build and run just the application container:
+
+```bash
+docker compose up -d --build
+```
+
+To stop:
+```bash
+docker compose down
+```
 
 ## API Endpoints
 

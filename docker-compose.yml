@@ -1,29 +1,13 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: url_shortener_postgres
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: url_shortener_app
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_pass}
-      POSTGRES_DB: ${POSTGRES_DB:-appdb}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
-
-  redis:
-    image: redis:7-alpine
-    container_name: url_shortener_redis
-    restart: unless-stopped
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-redis_secure_pass}"]
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-
-volumes:
-  postgres_data:
-  redis_data:
-
+      - "${PORT:-8080}:8080"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
